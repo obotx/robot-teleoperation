@@ -17,10 +17,8 @@ mp_drawing_styles = mp.solutions.drawing_styles
 mp_hands = mp.solutions.hands
 mp_pose = mp.solutions.pose
 
-
 class GestureRecognizer:
     """Recognize hand gestures (open/close) from MediaPipe landmarks."""
-    
     THUMB_TIP = 4
     THUMB_IP = 3
     THUMB_MCP = 2
@@ -46,7 +44,6 @@ class GestureRecognizer:
         tip = np.array([landmarks[tip_idx].x, landmarks[tip_idx].y, landmarks[tip_idx].z])
         pip = np.array([landmarks[pip_idx].x, landmarks[pip_idx].y, landmarks[pip_idx].z])
         wrist = np.array([landmarks[self.WRIST].x, landmarks[self.WRIST].y, landmarks[self.WRIST].z])
-        
         if mcp_idx is not None:
             mcp = np.array([landmarks[mcp_idx].x, landmarks[mcp_idx].y, landmarks[mcp_idx].z])
             tip_to_pip = np.linalg.norm(tip - pip)
@@ -62,23 +59,17 @@ class GestureRecognizer:
             return "unknown"
         
         fingers_extended = []
-        
         # Thumb
         thumb_extended = self.is_finger_extended(landmarks, self.THUMB_TIP, self.THUMB_IP, self.INDEX_MCP)
         fingers_extended.append(thumb_extended)
-        
         # Index
         fingers_extended.append(self.is_finger_extended(landmarks, self.INDEX_TIP, self.INDEX_PIP))
-        
         # Middle
         fingers_extended.append(self.is_finger_extended(landmarks, self.MIDDLE_TIP, self.MIDDLE_PIP))
-        
         # Ring
         fingers_extended.append(self.is_finger_extended(landmarks, self.RING_TIP, self.RING_PIP))
-        
         # Pinky
         fingers_extended.append(self.is_finger_extended(landmarks, self.PINKY_TIP, self.PINKY_PIP))
-        
         extended_count = sum(fingers_extended)
         total_fingers = len(fingers_extended)
         
@@ -177,14 +168,12 @@ class RigidTransformFilter:
         self.prev_tvec = filtered_tvec
         return filtered_rvec, filtered_tvec
 
-
 def get_camera_matrix(frame_width, frame_height):
     focal_length = frame_width
     center = (frame_width / 2, frame_height / 2)
     camera_matrix = np.array([[focal_length, 0, center[0]], [0, focal_length, center[1]], [0, 0, 1]], dtype="double")
     distortion = np.zeros((4, 1))
     return camera_matrix, distortion
-
 
 def load_calibration(calib_file, frame_width, frame_height):
     if calib_file and os.path.exists(calib_file):
@@ -194,7 +183,6 @@ def load_calibration(calib_file, frame_width, frame_height):
         except Exception as e:
             print(f" Error loading calibration: {e}. Falling back.")
     return get_camera_matrix(frame_width, frame_height)
-
 
 def parse_args():
     parser = argparse.ArgumentParser(description="3D Hand & Pose Tracking Publisher with Gesture Recognition")
@@ -207,10 +195,10 @@ def parse_args():
     parser.add_argument("--window-height", type=int, default=540, help="Display window height (default: 540)")
 
     parser.add_argument("--smoothing", type=float, default=0.10)
-    parser.add_argument("--detect_conf_hand", type=float, default=0.3)
-    parser.add_argument("--track_conf_hand", type=float, default=0.3)
-    parser.add_argument("--detect_conf_pose", type=float, default=0.5)
-    parser.add_argument("--track_conf_pose", type=float, default=0.5)
+    parser.add_argument("--detect_conf_hand", type=float, default=0.1)
+    parser.add_argument("--track_conf_hand", type=float, default=0.1)
+    parser.add_argument("--detect_conf_pose", type=float, default=0.1)
+    parser.add_argument("--track_conf_pose", type=float, default=0.1)
     parser.add_argument("--hand-padding", type=float, default=3.0,
                         help="Padding factor for hand crop around wrist (default: 3.0)")
     parser.add_argument("--use-bpf", action="store_true", 
@@ -228,12 +216,11 @@ def parse_args():
     
     return parser.parse_args()
 
-# Define SyntheticResults outside the loop for efficiency
 class SyntheticResults:
-    def __init__(self, landmarks_list, sides_list):
+    def __init__(self, landmarks_list, world_landmarks_list, sides_list):
         self.multi_hand_landmarks = landmarks_list
+        self.multi_hand_world_landmarks = world_landmarks_list
         self.multi_handedness = None
-        self.multi_hand_world_landmarks = None
         self.hand_sides = sides_list
 
 def main():
@@ -295,7 +282,6 @@ def main():
 
         plotter.show(auto_close=False, interactive_update=True)
 
-
     cap = cv2.VideoCapture(args.camera, cv2.CAP_ANY)
     if not cap.isOpened():
         for idx in [0, 2, 3]:
@@ -354,7 +340,7 @@ def main():
             min_detection_confidence=args.detect_conf_hand,
             min_tracking_confidence=args.track_conf_hand) as hands, \
             mp_pose.Pose(
-            model_complexity=2,
+            model_complexity=1,
             smooth_landmarks=True,
             enable_segmentation=True,
             min_detection_confidence=args.detect_conf_pose,
@@ -379,7 +365,6 @@ def main():
                 l = clahe.apply(l)
                 lab = cv2.merge((l, a, b))
                 image_rgb = cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
-                
                 blurred = cv2.GaussianBlur(image_rgb, (0, 0), 2.0)
                 image_rgb = cv2.addWeighted(image_rgb, 1.5, blurred, -0.5, 0)
             
@@ -444,13 +429,17 @@ def main():
                                         
                         if crop_results.multi_hand_landmarks:
                             hands_detected_in_crop = True
-                            for hand_landmarks in crop_results.multi_hand_landmarks:
+                            for idx, hand_landmarks in enumerate(crop_results.multi_hand_landmarks):
                                 bpf.shift_landmarks_to_original(hand_landmarks, crop, frame_w, frame_h)
                                 all_hand_landmarks.append(hand_landmarks)
+                                if crop_results.multi_hand_world_landmarks and idx < len(crop_results.multi_hand_world_landmarks):
+                                    all_hand_world_landmarks.append(crop_results.multi_hand_world_landmarks[idx])
+                                else:
+                                    all_hand_world_landmarks.append(None)
                                 all_hand_sides.append(side)
                     
                     if all_hand_landmarks:
-                        results_hands = SyntheticResults(all_hand_landmarks, all_hand_sides)
+                        results_hands = SyntheticResults(all_hand_landmarks, all_hand_world_landmarks, all_hand_sides)
 
                 if not hands_detected_in_crop:
                     results_hands = hands.process(image_rgb)
@@ -519,11 +508,13 @@ def main():
                 for idx, hand_landmarks in enumerate(results_hands.multi_hand_landmarks):
                     gesture = gesture_recognizer.recognize_gesture(hand_landmarks.landmark)
                     
-                    if results_hands.multi_hand_world_landmarks and idx < len(results_hands.multi_hand_world_landmarks):
+                    if (getattr(results_hands, 'multi_hand_world_landmarks', None) and 
+                        idx < len(results_hands.multi_hand_world_landmarks) and 
+                        results_hands.multi_hand_world_landmarks[idx] is not None):
                         world_landmarks = results_hands.multi_hand_world_landmarks[idx]
                         hand_model_points = np.array([[lm.x, lm.y, lm.z] for lm in world_landmarks.landmark])
                     else:
-                        hand_model_points = np.array([[lm.x, lm.y, lm.z] for lm in hand_landmarks.landmark])
+                        continue 
                     
                     hand_image_points = np.array([[lm.x * frame_width, lm.y * frame_height] for lm in hand_landmarks.landmark])
                     
@@ -538,10 +529,12 @@ def main():
                     else:
                         right_gesture = gesture
                     
+                    # <-- CHANGED: SOLVEPNP_EPNP is much more robust for hand landmarks than SQPNP
                     success_pnp, rvec, tvec = cv2.solvePnP(
-                        hand_model_points, hand_image_points, camera_matrix, distortion, flags=cv2.SOLVEPNP_SQPNP)
+                        hand_model_points, hand_image_points, camera_matrix, distortion, flags=cv2.SOLVEPNP_EPNP)
                                         
                     if success_pnp:
+                        # ... (keep the rest of your existing success_pnp block exactly as it was)
                         if is_left_hand:
                             rvec, tvec = hand_rigid_filter_left.filter(rvec, tvec)
                         else:

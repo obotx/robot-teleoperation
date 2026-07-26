@@ -64,6 +64,7 @@ dependencies = [
     { name = "eclipse-zenoh" },
     { name = "loguru" },
     { name = "numpy" },
+    { name = "pyyaml" },
     { name = "rich" },
 ]
 
@@ -82,6 +83,7 @@ requires-dist = [
     { name = "mkdocs-awesome-pages-plugin", marker = "extra == 'docs'", specifier = ">=2,<3" },
     { name = "mkdocstrings", extras = ["python"], marker = "extra == 'docs'", specifier = ">=0.25,<1" },
     { name = "numpy" },
+    { name = "pyyaml" },
     { name = "rich", specifier = ">=15.0.0" },
 ]
 provides-extras = ["docs"]
