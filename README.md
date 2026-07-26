@@ -23,6 +23,8 @@ teleoperating a robot arm in real time.
 
 <video src="https://github.com/user-attachments/assets/b6f64c26-bcda-4827-a561-64c2dc341950" controls width="100%"></video>
 
+<video src="https://github.com/user-attachments/assets/f8fc9c93-b83b-4234-adb6-ef90d2820a60" controls width="100%"></video>
+
 ## Requirements
 
 - Node.js 18+
