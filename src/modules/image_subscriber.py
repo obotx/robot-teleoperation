@@ -23,13 +23,13 @@ def image_callback(msg):
 
 def main():
     global latest_frame
-    print("Starting 'image_compressed' subscriber...")
+    print("Starting 'mediapipe_image' subscriber...")
     
     blank_img = np.zeros((480, 640, 3), dtype=np.uint8)
     cv2.imshow("Compressed Image Subscriber", blank_img)
     cv2.waitKey(1)
 
-    sub = babyros.node.Subscriber(topic="image_compressed", callback=image_callback)
+    sub = babyros.node.Subscriber(topic="mediapipe_image", callback=image_callback)
     print("Waiting for images... Press 'q' in the image window to quit.")
     
     try:
