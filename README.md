@@ -52,11 +52,16 @@ cd robot-teleoperation
 # Install dependencies
 uv sync
 
-# Run camera calibration
+# Run camera calibration (optional)
 uv run src/camera_calibration/capture_calibrate.py
 
-# Stream webcam and publish landmarks
-uv run src/examples/tracking_publisher.py --calibration src/camera_calibration/calibration_results/cam_calib_\(10x7\)_22.0mm_1920x1080.npz --use-bpf --width 1920 --height 1080
+### MEDIAPIPE ###
+
+# Run camera publisher
+uv run python src/modules/image_publisher.py
+
+# Publish landmarks
+uv run src/modules/tracking_publisher.py --width 1920 --height 1080 --use-bpf
 ```
 
 ## Calibration
