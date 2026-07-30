@@ -25,7 +25,9 @@ teleoperating a robot arm in real time.
 
 <!-- <video src="https://github.com/user-attachments/assets/f8fc9c93-b83b-4234-adb6-ef90d2820a60" controls width="100%"></video> -->
 
-<video src="https://github.com/user-attachments/assets/c2e4ca28-3ccf-48df-9306-74321c002a12" controls width="100%"></video>
+<!-- <video src="https://github.com/user-attachments/assets/c2e4ca28-3ccf-48df-9306-74321c002a12" controls width="100%"></video> -->
+
+<video src="https://github.com/user-attachments/assets/453b2586-dbfd-4d56-b10e-6199750684b2" controls width="100%"></video>
 
 ## Requirements
 
