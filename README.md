@@ -23,6 +23,12 @@ teleoperating a robot arm in real time.
 
 <video src="https://github.com/user-attachments/assets/b6f64c26-bcda-4827-a561-64c2dc341950" controls width="100%"></video>
 
+<!-- <video src="https://github.com/user-attachments/assets/f8fc9c93-b83b-4234-adb6-ef90d2820a60" controls width="100%"></video> -->
+
+<!-- <video src="https://github.com/user-attachments/assets/c2e4ca28-3ccf-48df-9306-74321c002a12" controls width="100%"></video> -->
+
+<video src="https://github.com/user-attachments/assets/453b2586-dbfd-4d56-b10e-6199750684b2" controls width="100%"></video>
+
 ## Requirements
 
 - Node.js 18+
@@ -50,11 +56,16 @@ cd robot-teleoperation
 # Install dependencies
 uv sync
 
-# Run camera calibration
+# Run camera calibration (optional)
 uv run src/camera_calibration/capture_calibrate.py
 
-# Stream webcam and publish landmarks
-uv run src/examples/tracking_publisher.py --calibration src/camera_calibration/calibration_results/cam_calib_\(10x7\)_22.0mm_1920x1080.npz --use-bpf --width 1920 --height 1080
+### MEDIAPIPE ###
+
+# Run camera publisher
+uv run python src/modules/image_publisher.py
+
+# Publish landmarks
+uv run src/modules/tracking_publisher.py --width 1920 --height 1080 --use-bpf
 ```
 
 ## Calibration
