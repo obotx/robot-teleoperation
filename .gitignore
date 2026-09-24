@@ -1,0 +1,53 @@
+node_modules/
+dist/
+.env
+.env.local
+*.local
+.vscode/
+.venv/
+*.bag
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Large ML models
+*.pt
+*.pth
+*.engine
+*.trt
+
+# Video / recordings
+*.mp4
+*.avi
+*.mov
+*.mkv
+
+# Robotics recordings
+*.bag
+*.db3
+*.mcap
+
+# Calibration / generated data
+*.npy
+*.npz
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+logs/
+
+# Generated output
+output/
+outputs/
+results/
+
+# Models
+*.onnx
+
+ *   . b a g

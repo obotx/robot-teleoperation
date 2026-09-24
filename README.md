@@ -1,1 +1,678 @@
-# robot-teleoperation
+# Robot Teleoperation
+
+A collection of approaches for teleoperating robot arms using human motion.
+The project uses cameras to track human hands and body movement, then streams the tracking data to a robot in real time.
+
+# Table of Contents
+
+- [Multiple Cameras](#multiple-cameras)
+  - [Calibration](#calibration)
+  - [3D Pose Estimation](#3d-pose-estimation)
+    - [Stream Mode](#stream-mode)
+    - [Playback Mode](#playback-mode)
+- [Web Based](#web-based)
+  - [Requirements](#requirements)
+  - [Parameters](#parameters)
+  - [WebSocket](#websocket)
+    - [Message format](#message-format)
+    - [Things worth knowing](#things-worth-knowing)
+    - [If the robot is in a different coordinate frame](#if-the-robot-is-in-a-different-coordinate-frame)
+  - [Example: Python server](#example-python-server)
+  - [Example: ROS 2](#example-ros-2)
+  - [In-page API (no server needed)](#in-page-api-no-server-needed)
+  - [Troubleshooting](#troubleshooting)
+- [MuJoCo](#mujoco)
+  - [Parameters](#parameters-1)
+- [ROS Package](#ros-package)
+  - [Wrist Position as Target Node](#wrist-position-as-target-node)
+  - [Landmark Marker Node](#landmark-marker-node)
+  - [Landmark Processor Node](#landmark-processor-node)
+  - [Keyboard Servo Control Node](#keyboard-servo-control-node)
+  - [Hand Tracking Launch](#hand-tracking-launch)
+  - [ROS2 Custom Message](#ros2-custom-message)
+    - [BodyLandmark.msg](#bodylandmarkmsg)
+    - [HandLandmark.msg](#handlandmarkmsg)
+    - [LandmarkMsg.msg](#landmarkmsgmsg)
+
+# Multiple Cameras
+
+This module reconstructs 3D hand/body pose from two or more synchronized webcams instead of a single monocular feed.
+
+```bash
+cd robot-teleoperation
+uv sync # for setup the environment
+```
+
+## Download ONNX Model
+
+Download and extract the RTMPose ONNX model into the models/ directory.
+
+```bash
+cd multi_cams
+```
+
+#### Windows PowerShell
+
+```bash
+New-Item -ItemType Directory -Force models
+Invoke-WebRequest `
+    -Uri "https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/rtmpose-l_simcc-ucoco_dw-ucoco_270e-384x288-2438fd99_20230728.zip" `
+    -OutFile "rtmpose.zip"
+Expand-Archive -Path "rtmpose.zip" -DestinationPath "models" -Force
+Remove-Item "rtmpose.zip"
+```
+
+#### Linux
+
+```bash
+mkdir -p models
+curl -L \
+  "https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/rtmpose-l_simcc-ucoco_dw-ucoco_270e-384x288-2438fd99_20230728.zip" \
+  -o /tmp/rtmpose.zip
+unzip -o /tmp/rtmpose.zip -d models
+rm /tmp/rtmpose.zip
+```
+
+#### MacOS
+
+```bash
+mkdir -p models
+curl -L \
+  "https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/rtmpose-l_simcc-ucoco_dw-ucoco_270e-384x288-2438fd99_20230728.zip" \
+  -o /tmp/rtmpose.zip
+unzip -o /tmp/rtmpose.zip -d models
+rm /tmp/rtmpose.zip
+```
+
+## Calibration
+
+<video src="https://github.com/user-attachments/assets/de20feeb-2ce3-430d-ac8c-82ce46a0de1d" controls width="100%"></video>
+
+`record_calibration.py` records a synchronized session and automatically performs intrinsic and extrinsic calibration.
+
+Print the [Charuco board](src/multi_camera/board/charuco_board_invert.png) on A4 paper and keep it visible in all cameras.
+
+```bash
+uv run python record_calibration.py 0 1 --width 2560 --height 1440 --frame-step 5
+```
+
+When the camera window opens:
+
+- Press `R` to start recording after the 3-second countdown
+- Press `S` to stop recording and start calibration
+
+| Argument | Description |
+|----------|-------------|
+| `cameras` | Camera indices to record from (e.g. `0 1 2`), positional, one or more |
+| `--width` | Target capture width (default: 2560) |
+| `--height` | Target capture height (default: 1440) |
+| `--frame-step` | Frame skip when extracting calibration points from the recording (default: 5) |
+
+**Output** — written to `outputs/<N>cam_<timestamp>/`:
+- The raw per-camera recordings
+- `capture_volume/` — calibration working data
+- `camera_array_aniposelib.toml` — the solved camera array (intrinsics + extrinsics), consumed by the pose estimation stage below
+
+## 3D Pose Estimation
+
+<video src="https://github.com/user-attachments/assets/9b21a416-f562-45c4-beeb-0dfbf2389820" controls width="100%"></video>
+
+### Stream Mode
+
+The pipeline detects 2D keypoints in background workers, triangulates them into 3D using the calibrated camera array, and displays the result live.
+
+`online.py` performs real-time multi-camera 3D pose tracking using RTMPose and the calibrated camera array.
+
+```bash
+uv run python online.py 0 1 \
+    --camera-array outputs/2cam_20250101_120000/camera_array_aniposelib.toml \
+    --model models/dwpose_l_coco_wholebody_384x288.onnx \
+    --conf 0.5 \
+    --save
+```
+
+| Argument | Description |
+|----------|-------------|
+| `cams` | Camera indices to track from (positional, minimum 2 required for triangulation) |
+| `--camera-array` | Path to the `camera_array.toml` produced by calibration (required) |
+| `--model` | Path to the RTMPose ONNX model (default: `models/dwpose_l_coco_wholebody_384x288.onnx`) |
+| `--output` | Base output directory (default: `outputs`) |
+| `--save` | Save per-camera video feeds as MP4 plus an `info.toml` session summary |
+| `--conf` | Confidence threshold for keypoints (default: 0.5) |
+
+Camera resolution is checked against the calibration resolution. A warning is shown if they do not match.
+
+With `--save`, it also saves:
+
+- `cam_<idx>.mp4` — per-camera recordings
+- `info.toml` — session configuration, camera details, model info, and frame count
+
+### Playback Mode
+
+`playback.py` replays recorded multi-camera videos using the same 3D pose tracking and triangulation pipeline as Stream Mode. It can either run the pose model fresh, or replay landmarks recorded from a previous run.
+
+**Option A — explicit videos/camera-array/model:**
+
+```bash
+uv run python playback.py \
+    --videos outputs/2cam_20250101_120000/cam_0.mp4 outputs/2cam_20250101_120000/cam_1.mp4 \
+    --camera-array outputs/2cam_20250101_120000/camera_array_aniposelib.toml \
+    --model models/rtmpose_l_coco_wholebody.onnx \
+    --conf 0.3 \
+    --speed 1.0
+```
+
+**Option B — session folder (reads `info.toml` for camera array, model, and confidence threshold):**
+
+```bash
+uv run python playback.py \
+    --folder outputs/2cam_20250101_120000 \
+    --speed 1.0
+```
+
+**Option C — replay recorded landmarks only (skips the pose model entirely):**
+
+```bash
+uv run python playback.py \
+    --folder outputs/2cam_20250101_120000 \
+    --xyz
+```
+
+If `--xyz` is passed but no `landmarks_2d.csv` / `landmarks_3d.csv` are found next to the videos, playback falls back to Option A/B behavior and records them for the first time.
+
+| Argument | Description |
+|----------|-------------|
+| `--folder` | Session folder containing `info.toml` and `cam_*.mp4`. Reads `camera_array_path`, `model_path`, and `confidence_threshold` from `info.toml`. Cannot be combined with `--videos`, `--camera-array`, or `--model` |
+| `--videos` | Video files to replay, one per camera. Requires `--camera-array`; cannot be combined with `--folder` |
+| `--camera-array` | Path to `camera_array.toml` (required with `--videos`) |
+| `--model` | Path to the RTMPose ONNX model (default: `models/rtmpose_l_coco_wholebody.onnx`, used only with `--videos`) |
+| `--conf` | Confidence threshold (default: `0.4`, or the value from `info.toml` when using `--folder`) |
+| `--speed` | Playback speed multiplier — e.g. `2.0` for 2x, `0.5` for half speed (default: `1.0`) |
+| `--xyz` | Skip the pose model and replay previously recorded 2D/3D landmarks from `landmarks_2d.csv` / `landmarks_3d.csv` (found alongside `--folder`, or in the parent folder of `--videos`). Falls back to recording if no landmarks exist yet |
+
+Playback throttles frame reads to match the source video's FPS scaled by `--speed`, runs the same background-thread detection + triangulation as live tracking, and shows the result in the same 3D viewer. It stops automatically at end-of-stream, when **ESC** is pressed, or on keyboard interrupt (Ctrl+C).
+
+When not using `--xyz` playback, 2D keypoints and triangulated 3D landmarks are recorded during the run and saved to `landmarks_2d.csv` and `landmarks_3d.csv` in the session/videos folder on exit.
+
+# Web Based
+
+Web app that takes a camera feed (or a video file), detects hands + upper body via
+MediaPipe, and pushes a JSON frame over WebSocket every ~33 ms. Intended for
+teleoperating a robot arm in real time.
+
+<video src="https://github.com/user-attachments/assets/14bf5437-a007-4f30-be92-aae054092e56" controls width="100%"></video>
+
+## Requirements
+
+- Node.js 18+
+- A modern browser: Chrome / Edge / Firefox (latest)
+- A webcam or a video file
+
+```bash
+npm install
+npm run dev        # → http://localhost:5173
+```
+
+For a production build: `npm run build` (output in `dist/`).
+
+## Parameters
+
+Three fields at the top of the page. They persist in `localStorage`.
+
+| Field | What it is | Typical values |
+|-------|-----------|----------------|
+| Hand size | Wrist-crease to base-of-middle-finger distance (cm) | 7–12 cm (adult ≈ 9) |
+| Shoulder | Across-the-shoulder width (cm) | 35–50 cm |
+| Cam FOV | Camera horizontal field-of-view (°) | USB webcam 60–70, laptop 65–75, phone back 70–80, phone front 85–100, ultra-wide 100–120 |
+
+Quick FOV dial-in: hold a ruler exactly **30 cm** from the camera, flat to the
+image plane. Watch the `Depth` reading. If it says 30, FOV is correct. If it says
+60, double FOV. If it says 15, halve FOV.
+
+## WebSocket
+
+Enter the server URL in the `WS` field (default `ws://localhost:8765`), click
+`Connect`. The dot turns green when connected. Auto-reconnect with exponential
+backoff, up to 10 attempts.
+
+### Message format
+
+Text WebSocket, JSON, UTF-8. One frame every ~33 ms (≈30 fps). Browser sends only,
+doesn't receive.
+
+```jsonc
+{
+  "t":   1717361234567,   // unix-ms
+  "seq": 12345,            // monotonic frame counter
+  "fps": 29.4,             // current frame rate
+
+  "frame": {               // coordinate system description — receiver needs this
+    "origin": "camera",
+    "x": "right",
+    "y": "up",
+    "z": "away_from_camera",
+    "units": "cm"
+  },
+
+  "calibration": {         // what values are currently set
+    "hand_size_cm": 9.0,
+    "fov_deg": 88.0,
+    "shoulder_width_cm": 42.0
+  },
+
+  "hands": [               // ALWAYS 2 slots: [Left, Right]
+    {
+      "label": "Left",
+      "present": true,     // if false — no other fields
+      "index": 0,
+      "confidence": 0.94,  // 0..1 from MediaPipe
+
+      "depth_cm": 87.4,    // wrist → camera distance
+
+      "wrist_cm": { "x": 1.23, "y": -0.50, "z": 87.41 },
+
+      "palm_normal": [0.01, -0.04, 0.99],  // unit vec ⊥ palm, points OUT of palm
+      "finger_dir":  [0.05,  0.81, 0.58],  // unit vec wrist → middle-MCP
+
+      "finger_curl":     [0.05, 0.10, 0.12, 0.60, 0.72],  // [thumb, idx, mid, ring, pinky], 0=straight 1=fully curled
+      "pinch_cm":        [4.2, 7.1, 6.9, 6.5],             // tip→thumb-tip per finger
+      "grip_aperture_cm": 4.2,                             // thumb↔index
+
+      "gesture":     "GRAB",    // "GRAB" | "OPEN" | "POINT" | "PEACE" | null
+      "gesture_id":  1,          // 0=none, 1=GRAB, 2=OPEN, 3=POINT, 4=PEACE
+      "is_grab":     true
+    },
+    { "label": "Right", "present": false }
+  ],
+
+  "interhand_cm": 41.2,    // only when both hands are visible
+
+  "body": {                // always 6 points when MediaPipe Pose sees the body
+    "shoulder_L": [-12.4, 3.1, -120.5],
+    "shoulder_R": [11.8, 2.9, -120.1],
+    "elbow_L":    [-18.7, -9.2, -110.0],
+    "elbow_R":    [16.4, -8.8, -109.5],
+    "wrist_L":    [1.23, -0.50, -87.41],  // == hands[Left].wrist_cm (always equal)
+    "wrist_R":    [-1.32, -1.46, -88.10]
+  },
+
+  "landmark_names": {
+    "hand_joints": [
+      "WRIST",
+      "THUMB_CMC","THUMB_MCP","THUMB_IP","THUMB_TIP",
+      "INDEX_MCP","INDEX_PIP","INDEX_DIP","INDEX_TIP",
+      "MIDDLE_MCP","MIDDLE_PIP","MIDDLE_DIP","MIDDLE_TIP",
+      "RING_MCP","RING_PIP","RING_DIP","RING_TIP",
+      "PINKY_MCP","PINKY_PIP","PINKY_DIP","PINKY_TIP"
+    ],
+    "body_joints": {
+      "0": "nose",
+      "11": "shoulder_L", "12": "shoulder_R",
+      "13": "elbow_L",    "14": "elbow_R",
+      "15": "wrist_L",    "16": "wrist_R",
+      "23": "hip_L",      "24": "hip_R"
+    }
+  }
+}
+```
+
+### Things worth knowing
+
+1. Everything is in **centimetres** in camera frame. Multiply by 0.01 to get metres.
+2. `body.wrist_L` and `hands[Left].wrist_cm` are the **same point**. The body wrist
+   is overwritten with the hand wrist every frame so the arm bone meets the hand.
+3. `label` is from the person's perspective, not the screen. In mirrored webcam
+   mode, the "Left" hand appears on the right side of the screen — that's normal.
+4. `hands` always has 2 elements in fixed order [Left, Right]. Missing hand =
+   `{"label": "Right", "present": false}` with no other fields.
+5. `seq` is monotonically increasing. Receiver detects drops: `received - expected`.
+   `t` is wall-clock, not for ordering.
+6. For the end-effector: `wrist_cm` (position) + `palm_normal` & `finger_dir`
+   (orientation). Their cross = third axis → full gripper orientation.
+7. For the gripper: `grip_aperture_cm` (0 = closed, 8–10 = open) or `is_grab` boolean.
+8. For high-level commands: `gesture` (string) or `gesture_id` (0..4).
+
+### If the robot is in a different coordinate frame
+
+```python
+# p_cam in camera frame, cm
+p_cam = [hand.wrist_cm.x, hand.wrist_cm.y, hand.wrist_cm.z]
+
+# T_cam_to_base — 4x4 matrix camera → robot base.
+# Measure once (hand-eye calibration).
+import numpy as np
+T = np.array([...])  # fill in
+p_base = T @ np.append(p_cam, 1.0)
+```
+
+For orientation: build a matrix from `palm_normal` (Z), `finger_dir` (Y), and their
+cross (X), then multiply by T.
+
+## Example: Python server
+
+```bash
+pip install websockets
+```
+
+```python
+# server.py
+import asyncio, json
+import websockets
+
+async def handler(ws):
+    print(f"Connected: {ws.remote_address}")
+    last_seq = -1
+    async for raw in ws:
+        data = json.loads(raw)
+        if last_seq >= 0 and data["seq"] != last_seq + 1:
+            print(f"!! dropped {last_seq+1}..{data['seq']-1}")
+        last_seq = data["seq"]
+
+        print(f"\n[seq={data['seq']} fps={data['fps']}]")
+        for hand in data["hands"]:
+            if not hand["present"]:
+                print(f"  {hand['label']}: ABSENT")
+                continue
+            w = hand["wrist_cm"]
+            print(f"  {hand['label']:5} conf={hand['confidence']:.2f}  "
+                  f"wrist=({w['x']:6.2f}, {w['y']:6.2f}, {w['z']:6.2f})cm  "
+                  f"grip={hand['grip_aperture_cm']}cm  gesture={hand.get('gesture')}")
+
+async def main():
+    async with websockets.serve(handler, "0.0.0.0", 8765):
+        print("ws://0.0.0.0:8765")
+        await asyncio.Future()
+
+asyncio.run(main())
+```
+
+Run: `python server.py`. In the browser, set `ws://localhost:8765` and click
+`Connect`.
+
+## Example: ROS 2
+
+```bash
+ros2 launch rosbridge_server rosbridge_websocket_launch.xml
+```
+
+In the browser: `ws://<robot-ip>:9090`. On the ROS side, subscribe to the WebSocket
+and republish into a ROS topic.
+
+## In-page API (no server needed)
+
+```js
+// Push event
+window.addEventListener('hand-robot-data', (e) => {
+  const { hands, body, frame, calibration } = e.detail;
+});
+
+// Or just the latest frame
+const latest = window.__handRobotData;
+```
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| Depth 60 at real 30 cm | FOV too narrow | Double FOV |
+| Depth 15 at real 30 cm | FOV too wide | Halve FOV |
+| Body 130, hand 80 | Normal — hand is in front of body | Re-verify FOV with the 30 cm ruler |
+| Hand "goes behind" body in 3D | MediaPipe briefly glitches during occlusion | Already handled (clamp to body depth) |
+| Gesture flickers | Pose is borderline | Hold a clearer GRAB/OPEN/POINT/PEACE position |
+| Depth jumps around | FOV or hand size wrong | Re-check 30 cm ruler + measure your hand |
+
+<!--
+## Structure
+
+```
+├── docs
+│   └── demo.mp4
+├── README.md
+└── src
+    ├── ros
+    │   └── robot_teleop
+    └── web
+        ├── index.html
+        ├── main.js
+        ├── package.json
+        ├── package-lock.json
+        └── v1
+```
+-->
+
+# MuJoCo
+
+<video src="https://github.com/user-attachments/assets/0d1b37a0-e36c-4e8d-8137-c4bc659694c4" controls width="100%"></video>
+
+<video src="https://github.com/user-attachments/assets/b6f64c26-bcda-4827-a561-64c2dc341950" controls width="100%"></video>
+
+<video src="https://github.com/user-attachments/assets/453b2586-dbfd-4d56-b10e-6199750684b2" controls width="100%"></video>
+
+```bash
+# Clone with submodules
+git clone --recurse-submodules https://github.com/obotx/robot-teleoperation.git
+
+cd robot-teleoperation
+
+# Install dependencies
+uv sync
+
+# Run camera calibration (optional)
+uv run src/camera_calibration/capture_calibrate.py
+
+### MEDIAPIPE ###
+
+# Run camera publisher
+uv run python src/modules/image_publisher.py
+
+# Publish landmarks
+uv run src/modules/tracking_publisher.py --width 1920 --height 1080 --use-bpf
+```
+
+## Pure Python MuJoCo
+
+This demo connects the browser-based hand tracker directly to a MuJoCo simulation.
+
+The pipeline consists of:
+
+```text
+MediaPipe → WebSocket → Landmark Processor → MuJoCo Controller
+```
+
+The landmark processor:
+- Converts MediaPipe coordinates to a robot-friendly frame
+- Tracks left/right hands consistently across frames
+- Applies EMA smoothing to hand and body landmarks
+- Extracts hand gestures and gripper state
+
+Start the landmark processor:
+
+```bash
+python landmark_processor.py --mode ws --host 0.0.0.0 --port 9090
+```
+
+## Parameters
+
+```bash
+python landmark_processor.py --mode ws \
+    --host 0.0.0.0 \
+    --port 9090 \
+    --record
+```
+
+| Parameter | Description |
+|------------|------------|
+| `--host` | WebSocket server host address |
+| `--port` | WebSocket server port |
+| `--record` | Save raw and processed landmark data to CSV |
+| `fix_x` | Use shoulder midpoint as X-axis origin |
+| `fix_y` | Use shoulder midpoint as Y-axis origin |
+| `fix_z` | Use shoulder midpoint as Z-axis origin |
+
+# ROS Package
+
+<video src="https://github.com/user-attachments/assets/69ce3621-14c9-4a60-9063-0dc903a5dc13" controls width="100%"></video>
+
+<video src="https://github.com/user-attachments/assets/dd417593-5118-4d7c-b3a1-64e6295da1a3" controls width="100%"></video>
+
+This package works together with the '[ROS 2 ObotX Mobile Manipulator](https://github.com/obotx/mobile-manipulator)'.
+
+## Wrist Position as Target Node
+
+Run the hand pose tracker:
+
+```bash
+ros2 run mm_robot_teleop hand_pose_tracker --ros-args -p closest_target:=true
+```
+
+Parameter:
+- `closest_target`: If true, the target is assigned to the arm that is closest to the detected wrist position, regardless of whether the hand is detected as left or right
+
+## Landmark Marker Node
+This node visualizes processed hand and body landmarks in RViz using `MarkerArray`.
+
+```bash
+ros2 run landmark_marker
+```
+
+Visualization:
+- Left and right hand landmarks
+- Hand skeleton connections
+- Hand labels and gestures
+- Body landmarks
+- Body skeleton connections
+
+## Landmark Processor Node
+This node converts raw landmark data from the web interface into ROS-friendly messages for teleoperation and visualization.
+
+Run:
+```bash
+ros2 run robot_teleop landmark_processor --ros-args -p fix_x:=true -p fix_y:=true -p fix_z:=false
+```
+
+Parameters:
+- `fix_x` [Bool]: Use shoulder midpoint as the X-axis origin
+- `fix_y` [Bool]: Use shoulder midpoint as the Y-axis origin
+- `fix_z` [Bool]: Use shoulder midpoint as the Z-axis origin
+
+## Keyboard Servo Control Node
+This node provides keyboard-based teleoperation for the ObotX dual-arm robot using MoveIt Servo.
+Supports three control modes:
+- Twist Mode – Cartesian velocity control.
+- Joint Mode – Joint velocity control.
+- Pose Mode – End-effector target pose control.
+
+Run:
+```bash
+ros2 run robot_teleop servo_keyboard_input
+```
+
+## Hand Tracking Launch
+Launch the complete hand-tracking pipeline, including:
+- Rosbridge WebSocket server
+- Landmark processing node
+- Landmark visualization node
+- Static TF publisher
+- RViz visualization (optional)
+
+Run:
+```bash
+ros2 launch robot_teleop hand_tracking.launch.py
+```
+
+Parameters:
+- `use_sim_time` [BOOL]: Use simulation time
+- `use_rviz` [BOOL]: Launch RViz automatically
+- `parent_frame` [ROS TF]: Parent frame for the landmark static transform
+- `offset_x` [FLOAT]: Offset applied along the X-axis
+- `offset_y` [FLOAT]: Offset applied along the Y-axis
+- `offset_z` [FLOAT]: Offset applied along the Z-axis
+- `fix_origin_x` [BOOL]: Use the midpoint between both shoulders as the X-axis origin
+- `fix_origin_y` [BOOL]: Use the midpoint between both shoulders as the Y-axis origin
+- `fix_origin_z` [BOOL]: Use the midpoint between both shoulders as the Z-axis origin
+
+## ROS2 Custom Message
+The package defines the following custom ROS messages.
+
+### BodyLandmark.msg
+Represents a single body landmark.
+
+```text
+string joint_name
+float32 x
+float32 y
+float32 z
+```
+
+| Field        | Description                                            |
+| ------------ | ------------------------------------------------------ |
+| `joint_name` | Name of the body joint (e.g. `shoulder_L`, `wrist_R`). |
+| `x`          | X position in meters.                                  |
+| `y`          | Y position in meters.                                  |
+| `z`          | Z position in meters.                                  |
+
+---
+
+### HandLandmark.msg
+Represents a detected hand and its associated features.
+
+```text
+bool present
+float32 confidence
+float32 depth_m
+geometry_msgs/Point wrist_m
+geometry_msgs/Point[] joints_m
+float32[] palm_normal
+float32[] finger_dir
+float32[] finger_curl
+float32[] pinch_m
+float32 grip_aperture_m
+string gesture
+int32 gesture_id
+bool is_grab
+```
+
+| Field             | Description                                   |
+| ----------------- | --------------------------------------------- |
+| `present`         | Whether the hand is currently detected.       |
+| `confidence`      | Detection confidence score.                   |
+| `depth_m`         | Estimated hand depth in meters.               |
+| `wrist_m`         | Wrist position in meters.                     |
+| `joints_m`        | Array of 21 hand landmarks in meters.         |
+| `palm_normal`     | Palm normal vector.                           |
+| `finger_dir`      | Main finger direction vector.                 |
+| `finger_curl`     | Curl values for each finger.                  |
+| `pinch_m`         | Pinch distances in meters.                    |
+| `grip_aperture_m` | Distance between thumb and fingers in meters. |
+| `gesture`         | Recognized gesture name.                      |
+| `gesture_id`      | Gesture identifier.                           |
+| `is_grab`         | Indicates whether a grab gesture is detected. |
+
+---
+
+### LandmarkMsg.msg
+Main message containing hand and body tracking data.
+
+```text
+float64 t
+int32 seq
+float32 fps
+string frame_info
+string calibration_info
+HandLandmark left_hand
+HandLandmark right_hand
+BodyLandmark[] body_landmarks
+string[] landmark_names
+```
+
+| Field              | Description                         |
+| ------------------ | ------------------------------------ |
+| `t`                | Timestamp from the tracking source. |
+| `seq`              | Frame sequence number.              |
+| `fps`              | Tracking frame rate.                |
+| `frame_info`       | Serialized frame metadata.          |
+| `calibration_info` | Serialized calibration metadata.    |
+| `left_hand`        | Processed left hand data.           |
+| `right_hand`       | Processed right hand data.          |
+| `body_landmarks`   | Array of body landmarks.            |
+| `landmark_names`   | List of available landmark names.   |
